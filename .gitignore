@@ -1,0 +1,5 @@
+.env
+backups/
+wiki-content/
+__pycache__/
+*.pyc

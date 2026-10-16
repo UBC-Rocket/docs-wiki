@@ -1,0 +1,62 @@
+# UBC Rocket Wiki - Wiki.js 2 + PostgreSQL + Caddy (automatic HTTPS)
+# Works on both Oracle shapes: A1.Flex (ARM) and E2.1.Micro (x86, 1 GB RAM).
+# Copy .env.example to .env, fill it in, then:  docker compose up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: wiki
+      POSTGRES_USER: wikijs
+      POSTGRES_PASSWORD: ${DB_PASS:?set DB_PASS in .env}
+    # Small-memory tuning so this also fits on the 1 GB Micro shape.
+    command: >
+      postgres
+        -c shared_buffers=64MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=32MB
+        -c max_connections=30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wikijs -d wiki"]
+      interval: 10s
+      retries: 10
+    restart: unless-stopped
+    logging: { driver: local }
+
+  wiki:
+    image: ghcr.io/requarks/wiki:2
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DB_TYPE: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: wikijs
+      DB_PASS: ${DB_PASS}
+      DB_NAME: wiki
+    expose: ["3000"]
+    restart: unless-stopped
+    logging: { driver: local }
+
+  caddy:
+    image: caddy:2
+    depends_on: [wiki]
+    environment:
+      WIKI_DOMAIN: ${WIKI_DOMAIN:?set WIKI_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    logging: { driver: local }
+
+volumes:
+  db-data: {}
+  caddy-data: {}
+  caddy-config: {}

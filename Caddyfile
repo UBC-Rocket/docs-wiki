@@ -1,0 +1,4 @@
+{$WIKI_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy wiki:3000
+}
