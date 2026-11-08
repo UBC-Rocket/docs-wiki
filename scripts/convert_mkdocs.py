@@ -7,7 +7,7 @@ folder tree that Wiki.js 3.x can import through its Git storage module.
 
 What it does
 ------------
-* Paths are slugified (lowercase, spaces -> "-") so every page and asset has a
+* Paths are slugified to what Wiki.js 3 accepts (lowercase a-z, 0-9, hyphens) so every page and asset has a
   clean URL. `a/b/index.md` becomes `a/b.md` (Wiki.js has no index pages; a page
   can share a name with a folder). The site root `index.md` becomes `home.md`.
 * Adds the YAML front matter Wiki.js expects (title, published, editor...).
@@ -76,15 +76,25 @@ H1_RE = re.compile(r"^#\s+(.+?)\s*#*\s*$")
 
 # --------------------------------------------------------------------------- paths
 def slug(part: str) -> str:
+    """Folder / page name for Wiki.js 3: only a-z, 0-9 and hyphens."""
     s = part.strip().lower()
-    s = re.sub(r"\s+", "-", s)
-    s = re.sub(r"[^a-z0-9._\-]", "-", s)
+    s = re.sub(r"[^a-z0-9]+", "-", s)
     s = re.sub(r"-{2,}", "-", s).strip("-")
     return s or "untitled"
 
 
-def slug_path(rel: PurePosixPath) -> PurePosixPath:
-    return PurePosixPath(*[slug(p) for p in rel.parts])
+def slug_file(name: str) -> str:
+    """Asset file name: slugged stem + lowercase extension."""
+    p = PurePosixPath(name)
+    ext = re.sub(r"[^a-z0-9]", "", p.suffix.lower())
+    return slug(p.stem if p.suffix else name) + (f".{ext}" if ext else "")
+
+
+def slug_path(rel: PurePosixPath, is_file: bool = False) -> PurePosixPath:
+    parts = [slug(p) for p in rel.parts]
+    if is_file:
+        parts[-1] = slug_file(rel.parts[-1])
+    return PurePosixPath(*parts)
 
 
 def page_out_path(rel_md: PurePosixPath) -> PurePosixPath:
@@ -93,9 +103,10 @@ def page_out_path(rel_md: PurePosixPath) -> PurePosixPath:
         parent = rel_md.parent
         if str(parent) in ("", "."):
             return PurePosixPath("home.md")
-        return slug_path(parent).with_suffix(".md")
-    s = slug_path(rel_md)
-    return s.with_name(s.stem + ".md")
+        folders = slug_path(parent)
+        return folders.parent / (folders.name + ".md")
+    folders = slug_path(rel_md.parent) if str(rel_md.parent) not in ("", ".") else PurePosixPath()
+    return folders / (slug(rel_md.stem) + ".md")
 
 
 def wiki_url(out_rel: PurePosixPath, is_page: bool) -> str:
@@ -264,7 +275,7 @@ class Converter:
         self.asset_map: dict[PurePosixPath, PurePosixPath] = {}  # src rel -> out rel
         self.report: dict[str, list[str]] = {k: [] for k in (
             "broken_links", "tabs", "html", "collisions", "overrides", "pdf_pages", "big_assets",
-            "display_math")}
+            "display_math", "empty")}
         self.now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     # ---- discovery
@@ -284,7 +295,7 @@ class Converter:
                 out = page_out_path(rel)
                 target = self.page_map
             else:
-                out = slug_path(rel)
+                out = slug_path(rel, is_file=True)
                 target = self.asset_map
             if out in taken:
                 self.report["collisions"].append(f"{rel}  and  {taken[out]}  ->  {out}")
@@ -417,6 +428,17 @@ class Converter:
             return pretty(rel.parent.name), body
         return pretty(rel.name), body
 
+    def section_index(self, out_rel: PurePosixPath) -> str:
+        """Body for an empty folder landing page: links to the pages under it."""
+        folder = out_rel.with_suffix("")
+        kids = sorted((self.titles.get(p, pretty(p.stem)), p) for p in self.page_map.values()
+                      if p.parent == folder)
+        if not kids:
+            return "*This page doesn't have any content yet.*\n"
+        lines = ["Pages in this section:", ""]
+        lines += [f"- [{t}]({wiki_url(p, True)})" for t, p in kids]
+        return "\n".join(lines) + "\n"
+
     def front_matter(self, title: str, description: str = "") -> str:
         return (
             "---\n"
@@ -441,6 +463,13 @@ class Converter:
             overridden = {PurePosixPath(f.relative_to(self.overrides).as_posix())
                           for f in self.overrides.rglob("*.md")}
 
+        self.titles = {}
+        for rel, out_rel in self.page_map.items():
+            src_path = self.src / Path(*rel.parts)
+            meta, body = split_front_matter(
+                src_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n"))
+            self.titles[out_rel] = self.title_for(src_path, rel, meta, body)[0]
+
         for rel, out_rel in self.page_map.items():
             if out_rel in overridden:
                 continue  # replaced by a hand-written page below
@@ -453,6 +482,9 @@ class Converter:
             if n_display:
                 self.report["display_math"].append(f"{out_rel} ({n_display} blocks)")
             body = body.rstrip() + "\n"
+            if not body.strip():
+                body = self.section_index(out_rel)
+                self.report["empty"].append(str(out_rel))
             dest = self.out / Path(*out_rel.parts)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(self.front_matter(title, meta.get("description", "")) + body,
@@ -499,6 +531,7 @@ class Converter:
             ("collisions", "Path collisions after slugifying (renamed with -2)"),
             ("broken_links", "Relative links whose target doesn't exist (left unchanged)"),
             ("tabs", "Content tabs (=== \"...\") - convert by hand to a :::block-tabs block"),
+            ("empty", "Empty pages - filled with a list of their section's pages (Wiki.js 3 rejects empty pages)"),
             ("display_math", "Display math converted to KaTeX blocks - spot-check these pages"),
             ("html", "Raw HTML - check it renders (Wiki.js sanitizes HTML)"),
             ("big_assets", "Assets over 5 MB - fine via Git import, but raise Admin > General > Uploads limit to re-upload in the editor"),
