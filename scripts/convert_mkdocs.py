@@ -31,6 +31,8 @@ What it does
   converted page at the same output path, e.g. a Wiki.js-specific contributing
   guide.
 
+Output goes under <out>/en/ (the language folder Wiki.js 3 Git storage uses).
+
 Things it cannot carry over are listed in the report printed at the end.
 Standard library only; Python 3.9+.
 """
@@ -269,7 +271,9 @@ def replace_set_macro(s: str) -> str:
 
 # --------------------------------------------------------------------------- converter
 class Converter:
-    def __init__(self, src: Path, out: Path, overrides: Path | None, pdf_pages: bool):
+    def __init__(self, src: Path, out: Path, overrides: Path | None, pdf_pages: bool,
+                 locale: str = "en"):
+        self.locale = locale
         self.src, self.out, self.overrides, self.pdf_pages = src, out, overrides, pdf_pages
         self.page_map: dict[PurePosixPath, PurePosixPath] = {}   # src rel -> out rel (.md)
         self.asset_map: dict[PurePosixPath, PurePosixPath] = {}  # src rel -> out rel
@@ -445,10 +449,10 @@ class Converter:
             f"title: {yaml_str(title)}\n"
             f"description: {yaml_str(description)}\n"
             "published: true\n"
-            f"date: {self.now}\n"
-            "tags: \n"
+            f"date: '{self.now}'\n"
+            "tags: []\n"
             "editor: markdown\n"
-            f"dateCreated: {self.now}\n"
+            f"dateCreated: '{self.now}'\n"
             "---\n\n"
         )
 
@@ -456,6 +460,8 @@ class Converter:
     def run(self):
         if self.out.exists() and any(self.out.iterdir()):
             sys.exit(f"Output folder {self.out} is not empty. Pick a new folder or empty it first.")
+        # Wiki.js 3 Git storage keeps each language in its own folder (en/home.md)
+        self.out = self.out / self.locale
         self.out.mkdir(parents=True, exist_ok=True)
         self.plan()
         overridden = set()
@@ -552,11 +558,12 @@ def main():
     ap.add_argument("--out", required=True, type=Path, help="empty output folder")
     ap.add_argument("--overrides", type=Path, default=here / "content-overrides",
                     help="folder of hand-written pages that replace converted ones")
+    ap.add_argument("--locale", default="en", help="Wiki.js language folder (default: en)")
     ap.add_argument("--no-pdf-pages", action="store_true", help="don't generate PDF wrapper pages")
     a = ap.parse_args()
     if not (a.src / "index.md").exists():
         sys.exit(f"{a.src} doesn't look like the MkDocs docs/ folder (no index.md).")
-    Converter(a.src.resolve(), a.out.resolve(), a.overrides, not a.no_pdf_pages).run()
+    Converter(a.src.resolve(), a.out.resolve(), a.overrides, not a.no_pdf_pages, a.locale).run()
 
 
 if __name__ == "__main__":

@@ -2,10 +2,10 @@
 title: 'Contributing'
 description: 'How to add and edit pages on the UBC Rocket wiki'
 published: true
-date: 2026-10-15T00:00:00.000Z
-tags: 
+date: '2026-10-15T00:00:00.000Z'
+tags: []
 editor: markdown
-dateCreated: 2026-10-15T00:00:00.000Z
+dateCreated: '2026-10-15T00:00:00.000Z'
 ---
 
 Anyone on the team can edit this wiki in the browser. No Git or local setup needed.

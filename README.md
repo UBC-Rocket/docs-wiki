@@ -1,4 +1,4 @@
-# UBC Rocket Wiki (Wiki.js on Oracle Cloud)
+# UBC Rocket Wiki (Wiki.js 3 on Oracle Cloud)
 
 Everything needed to run UBC Rocket's docs on Wiki.js at **docs.ubcrocket.com**:
 the server stack, setup and backup scripts, and a converter that turns the
@@ -6,7 +6,7 @@ current MkDocs site (`UBC-Rocket/docs`) into Wiki.js pages.
 
 ```
 docs-wiki/
-├── docker-compose.yml       Wiki.js 2 + PostgreSQL + Caddy (auto HTTPS)
+├── docker-compose.yml       Wiki.js 3 + PostgreSQL 18 + Caddy (auto HTTPS)
 ├── Caddyfile                reverse proxy for $WIKI_DOMAIN
 ├── .env.example             copy to .env on the server
 ├── scripts/
@@ -56,7 +56,8 @@ What the converter does:
 | `docs/index.md` | `home.md` (the wiki home page) |
 | Mixed-case paths with spaces | lowercase-with-hyphens, links updated to match |
 | No front matter | Wiki.js front matter; title from the first `# H1` or `.pages` |
-| `!!! warning "Title"` | `> **Title** ... {.is-warning}` callout |
+| `!!! warning "Title"` | `> [!WARNING] Title` callout |
+| Inline math `$x$` | `` $`x`$ `` (Wiki.js 3 syntax) |
 | Relative links and images | absolute wiki paths |
 | `![embed](file.pdf)` | `<iframe>` plus a fallback link (images stay images) |
 | Every PDF (old `pdf_pages` hook) | a wrapper page that embeds it (`--no-pdf-pages` to skip) |
@@ -68,8 +69,7 @@ author/date header hook (Wiki.js has its own page history).
 ## 2. Create the server (Oracle Cloud)
 
 1. **Instance:** VM.Standard.A1.Flex, Ubuntu 24.04 (aarch64), 1–2 OCPU, 6–12 GB.
-   If A1 says "Out of capacity", VM.Standard.E2.1.Micro works too. The setup
-   script adds swap, and Postgres is already tuned for 1 GB.
+   Wiki.js 3 needs at least 1 GB of RAM, so the E2.1.Micro shape is too small.
    Only use shapes tagged **Always Free-eligible**.
 2. **Reserved IP:** Instance → Attached VNICs → VNIC → IP addresses → ⋮ Edit →
    Reserved public IP → create `wiki-ip`.
@@ -93,20 +93,24 @@ Log back in, then:
 
 ```bash
 cd docs-wiki
-nano .env                         # confirm WIKI_DOMAIN
+nano .env                         # set ADMIN_EMAIL, confirm WIKI_DOMAIN, note ADMIN_PASS
 getent hosts docs.ubcrocket.com   # must print the reserved IP before continuing
 docker compose up -d
-docker compose logs -f wiki       # wait for "HTTP Server: [ RUNNING ]"
+docker compose logs -f wiki       # wait until it says the HTTP server is running
 ```
 
-Open https://docs.ubcrocket.com and create the admin account. Set
-**Site URL** to `https://docs.ubcrocket.com`.
+Open https://docs.ubcrocket.com and log in with `ADMIN_EMAIL` / `ADMIN_PASS`
+from `.env`. Change the password, and set the site hostname to
+`docs.ubcrocket.com` in the site settings.
 
 ## 4. Configure Wiki.js
 
+> Wiki.js 3 reorganized the admin area, so the menu paths below may be named a
+> little differently. Every setting still exists; use the admin search if one moves.
+
 **Connect Git storage** (Admin → Storage → Git):
 
-1. Make a deploy key on the server. Wiki.js 2 is most reliable with PEM keys:
+1. Make a deploy key on the server. PEM keys are the safest choice:
    ```bash
    ssh-keygen -t rsa -b 4096 -m PEM -N "" -f ~/wiki_deploy
    cat ~/wiki_deploy.pub
