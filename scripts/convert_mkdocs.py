@@ -20,10 +20,11 @@ What it does
 * Relative links to pages, images and files are rewritten to absolute Wiki.js
   paths, so they work no matter which page renders them.
 * `![embed](...)` / `![iframe](...)` (the MkDocs iframe hook) -> a plain image
-  for image files, otherwise an <iframe> plus a fallback link.
-  (Enable iframes in Admin -> Rendering -> HTML -> Security.)
+  for images, a `::block-pdf` PDF viewer for PDFs, otherwise an <iframe> plus
+  a fallback link.
+* `$$ ... $$` display math -> `::block-katex` content blocks.
 * Every PDF without a page of the same name gets a small wrapper page that
-  embeds it, matching what the MkDocs `pdf_pages` hook did. Use --no-pdf-pages
+  shows it in a PDF viewer block, matching what the MkDocs `pdf_pages` hook did. Use --no-pdf-pages
   to skip this.
 * `\\set{...}` (MathJax braket) -> `\\{...\\}` so the math renders in KaTeX.
 * Files in content-overrides/ (next to this script's parent folder) replace the
@@ -152,44 +153,89 @@ INLINE_MATH_RE = re.compile(r"(?<![\\$`])\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\
 CODE_SPAN_RE = re.compile(r"(`+)(?:.+?)\1")
 
 
-def convert_inline_math(body: str) -> tuple[str, int, int]:
-    """$x$ -> $`x`$ (Wiki.js 3 inline math). Skips code fences, inline code and
-    $$ display blocks. Returns (body, inline_count, display_block_count)."""
-    out, in_fence, in_display, n_inline, n_display = [], False, False, 0, 0
-    for line in body.split("\n"):
+def katex_block(lines: list[str], pad: str) -> list[str]:
+    """Wiki.js 3 KaTeX content block (the syntax its editor generates)."""
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    body = [ln[len(pad):] if ln.startswith(pad) else ln.lstrip() for ln in lines]
+    return ["", f"{pad}::block-katex", f"{pad}```latex"] + [f"{pad}{b}".rstrip() for b in body] + \
+        [f"{pad}```", f"{pad}::", ""]
+
+
+def convert_math(body: str) -> tuple[str, int, int]:
+    """Math for Wiki.js 3:
+      * $x$            -> $`x`$             (inline; needs dollars AND backticks)
+      * $$ ... $$      -> ::block-katex      (display; one-line or multi-line)
+    Code fences and inline code are left alone.
+    Returns (body, inline_count, display_count)."""
+    out: list[str] = []
+    in_fence, n_inline, n_display = False, 0, 0
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         stripped = line.strip()
         if FENCE_RE.match(line):
             in_fence = not in_fence
             out.append(line)
+            i += 1
             continue
         if in_fence:
             out.append(line)
+            i += 1
             continue
         if stripped.startswith("$$"):
-            # $$ on its own line toggles a block; $$...$$ on one line is a whole block
-            one_line = stripped != "$$" and len(stripped) > 4 and stripped.endswith("$$")
-            if one_line:
+            pad = line[:len(line) - len(line.lstrip())]
+            rest = stripped[2:]
+            if rest.rstrip().endswith("$$") and rest.strip() != "":
+                # $$ ... $$ on one line
+                out.extend(katex_block([pad + rest.rstrip()[:-2].strip()], pad))
                 n_display += 1
-            else:
-                in_display = not in_display
-                if in_display:
-                    n_display += 1
-            out.append(line)
+                i += 1
+                continue
+            # multi-line: collect until a line ending in $$
+            math = [pad + rest] if rest.strip() else []
+            i += 1
+            closed = False
+            while i < len(lines):
+                ln = lines[i]
+                if ln.rstrip().endswith("$$"):
+                    before = ln.rstrip()[:-2]
+                    if before.strip():
+                        math.append(before)
+                    closed = True
+                    i += 1
+                    break
+                math.append(ln)
+                i += 1
+            if closed:
+                out.extend(katex_block(math, pad))
+                n_display += 1
+            else:  # unterminated - leave as it was
+                out.append(line)
+                out.extend(math)
             continue
-        if in_display:
-            out.append(line)
-            continue
-        # protect inline code spans
-        spans = []
+        # inline math, protecting code spans
+        spans: list[str] = []
+
         def keep(m):
             spans.append(m.group(0))
             return f"\x00{len(spans) - 1}\x00"
         tmp = CODE_SPAN_RE.sub(keep, line)
         tmp, k = INLINE_MATH_RE.subn(lambda m: "$`" + m.group(1) + "`$", tmp)
         n_inline += k
-        line = re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], tmp)
-        out.append(line)
-    return "\n".join(out), n_inline, n_display
+        out.append(re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], tmp))
+        i += 1
+    text = "\n".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text, n_inline, n_display
+
+
+def pdf_block(url: str) -> str:
+    """Wiki.js 3 PDF Viewer content block, plus a plain link as a fallback."""
+    return f'::block-pdf{{src="{url}"}}\n::\n\n[Open / download the PDF]({url})'
 
 
 def replace_set_macro(s: str) -> str:
@@ -285,6 +331,9 @@ class Converter:
                 ext = PurePosixPath(final.split("#")[0]).suffix.lower()
                 if ext in IMAGE_EXT:
                     return f"![{PurePosixPath(unquote(final)).stem}]({final})"
+                if ext == ".pdf":
+                    return "\n" + pdf_block(final) + "\n"
+                self.report["html"].append(f"{page_src}: embed of {final} kept as <iframe>")
                 return (f'<iframe src="{final}" width="100%" height="800" loading="lazy" '
                         f'style="border:1px solid #ccc"></iframe>\n\n[Open in a new tab]({final})')
             if url is None:
@@ -400,7 +449,7 @@ class Converter:
             meta, body = split_front_matter(text)
             title, body = self.title_for(src_path, rel, meta, body)
             body = replace_set_macro(self.convert_body(rel, body))
-            body, n_inline, n_display = convert_inline_math(body)
+            body, n_inline, n_display = convert_math(body)
             if n_display:
                 self.report["display_math"].append(f"{out_rel} ({n_display} blocks)")
             body = body.rstrip() + "\n"
@@ -425,8 +474,7 @@ class Converter:
                 if (self.out / Path(*page.parts)).exists():
                     continue
                 url = wiki_url(out_rel, False)
-                body = (f'<iframe src="{url}" width="100%" height="800" loading="lazy" '
-                        f'style="border:1px solid #ccc"></iframe>\n\n[Open / download the PDF]({url})\n')
+                body = pdf_block(url) + "\n"
                 (self.out / Path(*page.parts)).write_text(
                     self.front_matter(pretty(rel.name), "PDF") + body, encoding="utf-8", newline="\n")
                 self.report["pdf_pages"].append(str(page))
@@ -451,7 +499,7 @@ class Converter:
             ("collisions", "Path collisions after slugifying (renamed with -2)"),
             ("broken_links", "Relative links whose target doesn't exist (left unchanged)"),
             ("tabs", "Content tabs (=== \"...\") - convert by hand to a :::block-tabs block"),
-            ("display_math", "Pages with $$ display math - check these render (Wiki.js 3 uses KaTeX blocks)"),
+            ("display_math", "Display math converted to KaTeX blocks - spot-check these pages"),
             ("html", "Raw HTML - check it renders (Wiki.js sanitizes HTML)"),
             ("big_assets", "Assets over 5 MB - fine via Git import, but raise Admin > General > Uploads limit to re-upload in the editor"),
         ]
