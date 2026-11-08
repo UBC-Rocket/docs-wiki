@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert the UBC Rocket MkDocs site (UBC-Rocket/docs, folder `docs/`) into a
-folder tree that Wiki.js 2.x can import through its Git storage module.
+folder tree that Wiki.js 3.x can import through its Git storage module.
 
     python scripts/convert_mkdocs.py --src ../docs/docs --out ../wiki-content
 
@@ -14,8 +14,9 @@ What it does
   Title comes from: existing front matter -> first `# H1` -> `.pages` title
   (for folder landing pages) -> the file name. The leading H1 is removed because
   Wiki.js already prints the title above the page.
-* `!!! type "Title"` / `??? type` admonitions -> Wiki.js callouts
-  (blockquote + `{.is-info}` / `{.is-success}` / `{.is-warning}` / `{.is-danger}`).
+* `!!! type "Title"` / `??? type` admonitions -> Wiki.js 3 callouts
+  (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`).
+* Inline math `$x$` -> `$`x`$` (Wiki.js 3 needs both the dollars and backticks).
 * Relative links to pages, images and files are rewritten to absolute Wiki.js
   paths, so they work no matter which page renders them.
 * `![embed](...)` / `![iframe](...)` (the MkDocs iframe hook) -> a plain image
@@ -46,19 +47,19 @@ from urllib.parse import quote, unquote
 
 SKIP_DIRS = {"javascripts", "stylesheets", ".git"}
 SKIP_FILE_NAMES = {".pages", ".DS_Store", "Thumbs.db"}
-SKIP_FILE_RE = re.compile(r"^empty \(for git to track\)\.txt$", re.IGNORECASE)
+SKIP_FILE_RE = re.compile(r"^(empty \(for git to track\)\.txt|~\$.*|\.~lock\..*#)$", re.IGNORECASE)
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
 
-CALLOUT = {
-    "note": "is-info", "info": "is-info", "abstract": "is-info",
-    "summary": "is-info", "tldr": "is-info", "todo": "is-info", "seealso": "is-info",
-    "tip": "is-success", "hint": "is-success", "important": "is-success",
-    "success": "is-success", "check": "is-success", "done": "is-success",
-    "example": "is-success",
-    "warning": "is-warning", "caution": "is-warning", "attention": "is-warning",
-    "question": "is-warning", "help": "is-warning", "faq": "is-warning",
-    "danger": "is-danger", "error": "is-danger", "failure": "is-danger",
-    "fail": "is-danger", "missing": "is-danger", "bug": "is-danger",
+CALLOUT = {  # MkDocs admonition type -> Wiki.js 3 callout ([!NOTE] etc.)
+    "note": "NOTE", "info": "NOTE", "abstract": "NOTE", "summary": "NOTE",
+    "tldr": "NOTE", "todo": "NOTE", "seealso": "NOTE", "quote": "NOTE",
+    "tip": "TIP", "hint": "TIP", "success": "TIP", "check": "TIP",
+    "done": "TIP", "example": "TIP",
+    "important": "IMPORTANT",
+    "warning": "WARNING", "attention": "WARNING", "question": "WARNING",
+    "help": "WARNING", "faq": "WARNING",
+    "caution": "CAUTION", "danger": "CAUTION", "error": "CAUTION",
+    "failure": "CAUTION", "fail": "CAUTION", "missing": "CAUTION", "bug": "CAUTION",
 }
 
 ADMON_RE = re.compile(r'^(?P<indent>\s*)(?:!!!|\?\?\?\+?)\s+(?P<type>[\w-]+)(?:\s+"(?P<title>[^"]*)")?\s*$')
@@ -147,6 +148,50 @@ def yaml_str(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
+INLINE_MATH_RE = re.compile(r"(?<![\\$`])\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\$(?![\d$`])")
+CODE_SPAN_RE = re.compile(r"(`+)(?:.+?)\1")
+
+
+def convert_inline_math(body: str) -> tuple[str, int, int]:
+    """$x$ -> $`x`$ (Wiki.js 3 inline math). Skips code fences, inline code and
+    $$ display blocks. Returns (body, inline_count, display_block_count)."""
+    out, in_fence, in_display, n_inline, n_display = [], False, False, 0, 0
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        if stripped.startswith("$$"):
+            # $$ on its own line toggles a block; $$...$$ on one line is a whole block
+            one_line = stripped != "$$" and len(stripped) > 4 and stripped.endswith("$$")
+            if one_line:
+                n_display += 1
+            else:
+                in_display = not in_display
+                if in_display:
+                    n_display += 1
+            out.append(line)
+            continue
+        if in_display:
+            out.append(line)
+            continue
+        # protect inline code spans
+        spans = []
+        def keep(m):
+            spans.append(m.group(0))
+            return f"\x00{len(spans) - 1}\x00"
+        tmp = CODE_SPAN_RE.sub(keep, line)
+        tmp, k = INLINE_MATH_RE.subn(lambda m: "$`" + m.group(1) + "`$", tmp)
+        n_inline += k
+        line = re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], tmp)
+        out.append(line)
+    return "\n".join(out), n_inline, n_display
+
+
 def replace_set_macro(s: str) -> str:
     """\\set{...} -> \\{...\\}, with brace matching (KaTeX has no \\set)."""
     out, i, key = [], 0, "\\set{"
@@ -172,7 +217,8 @@ class Converter:
         self.page_map: dict[PurePosixPath, PurePosixPath] = {}   # src rel -> out rel (.md)
         self.asset_map: dict[PurePosixPath, PurePosixPath] = {}  # src rel -> out rel
         self.report: dict[str, list[str]] = {k: [] for k in (
-            "broken_links", "tabs", "html", "collisions", "overrides", "pdf_pages", "big_assets")}
+            "broken_links", "tabs", "html", "collisions", "overrides", "pdf_pages", "big_assets",
+            "display_math")}
         self.now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     # ---- discovery
@@ -268,10 +314,10 @@ class Converter:
             if m:
                 base = len(m.group("indent"))
                 kind = m.group("type").lower()
-                cls = CALLOUT.get(kind, "is-info")
+                ctype = CALLOUT.get(kind, "NOTE")
                 title = m.group("title")
-                if title is None:
-                    title = kind.capitalize()
+                if title is None and kind not in ("note", "tip", "important", "warning", "caution"):
+                    title = kind.capitalize()  # keep e.g. "Example" visible
                 block: list[str] = []
                 i += 1
                 while i < len(lines):
@@ -289,13 +335,9 @@ class Converter:
                 while block and block[-1] == "":
                     block.pop()
                 pad = " " * base
-                if title:
-                    out.append(f"{pad}> **{title}**")
-                    if block:
-                        out.append(f"{pad}>")
+                out.append(f"{pad}> [!{ctype}]" + (f" {title}" if title else ""))
                 inner = self.convert_body(page_src, "\n".join(block)).splitlines() if block else []
                 out.extend(f"{pad}> {b}".rstrip() for b in inner)
-                out.append(f"{pad}{{.{cls}}}")
                 out.append("")
                 continue
 
@@ -357,7 +399,11 @@ class Converter:
             text = src_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
             meta, body = split_front_matter(text)
             title, body = self.title_for(src_path, rel, meta, body)
-            body = replace_set_macro(self.convert_body(rel, body)).rstrip() + "\n"
+            body = replace_set_macro(self.convert_body(rel, body))
+            body, n_inline, n_display = convert_inline_math(body)
+            if n_display:
+                self.report["display_math"].append(f"{out_rel} ({n_display} blocks)")
+            body = body.rstrip() + "\n"
             dest = self.out / Path(*out_rel.parts)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(self.front_matter(title, meta.get("description", "")) + body,
@@ -404,7 +450,8 @@ class Converter:
         sections = [
             ("collisions", "Path collisions after slugifying (renamed with -2)"),
             ("broken_links", "Relative links whose target doesn't exist (left unchanged)"),
-            ("tabs", "Content tabs (=== \"...\") - convert by hand to a {.tabset} heading"),
+            ("tabs", "Content tabs (=== \"...\") - convert by hand to a :::block-tabs block"),
+            ("display_math", "Pages with $$ display math - check these render (Wiki.js 3 uses KaTeX blocks)"),
             ("html", "Raw HTML - check it renders (Wiki.js sanitizes HTML)"),
             ("big_assets", "Assets over 5 MB - fine via Git import, but raise Admin > General > Uploads limit to re-upload in the editor"),
         ]

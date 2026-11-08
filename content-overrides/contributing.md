@@ -43,27 +43,28 @@ the page **History**, so nothing is ever lost, and it is also committed to the
 
 ## Images and PDFs
 
-Click the **Insert Assets** button (the image icon) in the editor, upload the
-file into the same folder as your page, then insert it. PDFs can be shown inline with:
-
-```html
-<iframe src="/2026-27-tvr/controls/control-algorithm/rocket_proposal.pdf" width="100%" height="800"></iframe>
-```
+Upload files through the editor's insert/asset button into the same folder as
+your page, then insert them. To show a PDF inline, use **Insert Block → PDF Viewer**.
 
 ## Callout boxes
 
 ```markdown
-> **Heads up**
->
+> [!WARNING] Heads up
 > Firefox has trouble talking to the ESC over Web Serial.
-{.is-warning}
 ```
 
-Use `{.is-info}`, `{.is-success}`, `{.is-warning}` or `{.is-danger}`.
+Types: `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`.
+The text after the type is an optional title.
 
 ## Math
 
-Inline `$E = mc^2$` and block math between `$$` lines both work.
+Inline math needs dollar signs **and** backticks: `` $`E = mc^2`$ ``.
+For a full equation on its own line, use **Insert Block → KaTeX** in the editor.
+
+## Edit approvals
+
+Some sections may require a lead to approve edits before they go live. If your
+change doesn't show up right away, it is waiting for review.
 
 ## Editing from Git instead
 

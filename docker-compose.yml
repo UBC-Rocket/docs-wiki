@@ -1,23 +1,24 @@
-# UBC Rocket Wiki - Wiki.js 2 + PostgreSQL + Caddy (automatic HTTPS)
-# Works on both Oracle shapes: A1.Flex (ARM) and E2.1.Micro (x86, 1 GB RAM).
+# UBC Rocket Wiki - Wiki.js 3 + PostgreSQL 18 + Caddy (automatic HTTPS)
+# Runs on Oracle A1.Flex (ARM) or x86. Wiki.js 3 needs at least 1 GB RAM.
 # Copy .env.example to .env, fill it in, then:  docker compose up -d
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_DB: wiki
       POSTGRES_USER: wikijs
       POSTGRES_PASSWORD: ${DB_PASS:?set DB_PASS in .env}
-    # Small-memory tuning so this also fits on the 1 GB Micro shape.
+    # Modest tuning; plenty for a team wiki on a 6-12 GB A1 instance.
     command: >
       postgres
-        -c shared_buffers=64MB
-        -c work_mem=4MB
-        -c maintenance_work_mem=32MB
-        -c max_connections=30
+        -c shared_buffers=256MB
+        -c work_mem=8MB
+        -c maintenance_work_mem=64MB
+        -c max_connections=50
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # Postgres 18 images keep data under /var/lib/postgresql/<version>/
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wikijs -d wiki"]
       interval: 10s
@@ -26,11 +27,14 @@ services:
     logging: { driver: local }
 
   wiki:
-    image: ghcr.io/requarks/wiki:2
+    # Major-version tag: gets 3.x fixes on `docker compose pull`. (3.x has no `latest` tag.)
+    image: ghcr.io/requarks/wiki:3
     depends_on:
       db: { condition: service_healthy }
     environment:
-      DB_TYPE: postgres
+      # Only used to create the first admin account; no effect afterwards.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
+      ADMIN_PASS: ${ADMIN_PASS:?set ADMIN_PASS in .env}
       DB_HOST: db
       DB_PORT: 5432
       DB_USER: wikijs

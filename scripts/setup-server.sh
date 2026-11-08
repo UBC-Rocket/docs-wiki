@@ -61,22 +61,24 @@ chmod +x "$APP_DIR/scripts/backup.sh"
 CRON_LINE="15 3 * * * cd $APP_DIR && ./scripts/backup.sh >> $APP_DIR/backups/backup.log 2>&1"
 mkdir -p "$APP_DIR/backups"
 chown -R "$APP_USER":"$APP_USER" "$APP_DIR/backups"
-( crontab -u "$APP_USER" -l 2>/dev/null | grep -v 'scripts/backup.sh' ; echo "$CRON_LINE" ) | crontab -u "$APP_USER" -
+EXISTING_CRON=$(crontab -u "$APP_USER" -l 2>/dev/null | grep -v 'scripts/backup.sh' || true)
+printf '%s\n%s\n' "$EXISTING_CRON" "$CRON_LINE" | sed '/^$/d' | crontab -u "$APP_USER" -
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
   cp "$APP_DIR/.env.example" "$APP_DIR/.env"
-  sed -i "s|^DB_PASS=.*|DB_PASS=$(openssl rand -base64 24 | tr -d '/+=')|" "$APP_DIR/.env"
+  sed -i "s|^DB_PASS=.*|DB_PASS=$(openssl rand -hex 24)|" "$APP_DIR/.env"
+  sed -i "s|^ADMIN_PASS=.*|ADMIN_PASS=$(openssl rand -base64 18 | tr -d '/+=')|" "$APP_DIR/.env"
   chown "$APP_USER":"$APP_USER" "$APP_DIR/.env"
   chmod 600 "$APP_DIR/.env"
-  echo "==> Created .env with a random DB_PASS. Check WIKI_DOMAIN in it."
+  echo "==> Created .env with random DB_PASS and ADMIN_PASS. Set ADMIN_EMAIL and check WIKI_DOMAIN."
 fi
 
 cat <<EOF
 
 Done. Next:
   1. Log out and back in (so '$APP_USER' can run docker without sudo).
-  2. Edit $APP_DIR/.env (WIKI_DOMAIN).
+  2. Edit $APP_DIR/.env (ADMIN_EMAIL, WIKI_DOMAIN). Note ADMIN_PASS - it's your first login.
   3. Check DNS:   getent hosts \$(grep WIKI_DOMAIN .env | cut -d= -f2)   -> should print this server's public IP
   4. Start:       cd $APP_DIR && docker compose up -d
-  5. Open https://<your domain> and create the admin account.
+  5. Open https://<your domain> and log in with ADMIN_EMAIL / ADMIN_PASS.
 EOF
