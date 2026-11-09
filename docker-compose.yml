@@ -43,6 +43,10 @@ services:
     expose: ["3000"]
     restart: unless-stopped
     logging: { driver: local }
+    volumes:
+      # Defined at https://github.com/requarks/wiki/blob/013dd6e998f2a9eea80ff22483493d0326dc0eff/dev/build/Dockerfile
+      - wiki-data-content:/wiki/data/content
+      - wiki-data-repo:/wiki/data/repo
 
   caddy:
     image: caddy:2
@@ -62,5 +66,7 @@ services:
 
 volumes:
   db-data: {}
+  wiki-data-content: {}
+  wiki-data-repo: {}
   caddy-data: {}
   caddy-config: {}
