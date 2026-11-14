@@ -27,8 +27,7 @@ services:
     logging: { driver: local }
 
   wiki:
-    # Major-version tag: gets 3.x fixes on `docker compose pull`. (3.x has no `latest` tag.)
-    image: ghcr.io/requarks/wiki:3
+    image: ghcr.io/requarks/wiki:3.3.1
     depends_on:
       db: { condition: service_healthy }
     environment:
