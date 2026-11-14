@@ -6,7 +6,7 @@ current MkDocs site (`UBC-Rocket/docs`) into Wiki.js pages.
 
 ```
 docs-wiki/
-├── docker-compose.yml       Wiki.js 3 + PostgreSQL 18 + Caddy (auto HTTPS)
+├── compose.yml              Wiki.js 3 + PostgreSQL 18 + Caddy (auto HTTPS)
 ├── Caddyfile                reverse proxy for $WIKI_DOMAIN
 ├── .env.example             copy to .env on the server
 ├── scripts/
